@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 
 class LevelSet:
@@ -104,15 +105,58 @@ class Plot2DContourf:
         self.fig.savefig(filename, dpi=300)
 
 
-positions = np.linspace(0, 100, 100)
+def level_set_to_tanh(data, interfacial_width):
+    """
+    Convert a level-set field to a tanh ranging from 0 to 1
+    """
+    return 0.5 * (1 - np.tanh(data / (np.sqrt(2) * interfacial_width)))
 
-x, y = np.meshgrid(positions, positions)
 
-sphere_level_set = SphereLevelSet(40, [50, 50])
-data = sphere_level_set.get_value(x, y)
+def find_positions_from_contact_angle(contact_angle: float, radius: float):
+    """
+    This is a little helper function that helps find the
+    positions a plane and sphere level-set given some contact
+    angle.
 
-plane_level_set = PlaneLevelSet([0, 1], [40, 40])
-data = plane_level_set.get_value(x, y)
+    For now, it assumes that the domain size is 100 by 100 with
+    100 points in either direction.
+    """
+    x_size = 100
+    y_size = 100
 
-plotter = Plot2DContourf(x, y, data)
-plotter.save("contour.png")
+    h = 1
+
+    n_points_x = math.ceil(x_size / h)
+    n_points_y = math.ceil(y_size / h)
+
+    x_positions = np.linspace(0, x_size, n_points_x)
+    y_positions = np.linspace(0, y_size, n_points_y)
+
+    # Create the meshgrid
+    x, y = np.meshgrid(x_positions, y_positions)
+
+    # Place the plane level-set somewhere in domain. For now,
+    # we'll always place it at y = 20
+    plane_y_position = 20
+    plane_level_set = PlaneLevelSet([0, 1], [plane_y_position, plane_y_position])
+    plane_level_set_data = plane_level_set.get_value(x, y)
+
+    # Compute the origin of the sphere, given the contact angle
+    sphere_x_position = x_size / 2
+
+    def compute_sphere_y_position(_radius: float):
+        return plane_y_position - _radius * math.cos(contact_angle)
+
+    sphere_y_position = compute_sphere_y_position(radius)
+
+    # Place the sphere level-set
+    sphere_level_set = SphereLevelSet(radius, [sphere_x_position, sphere_y_position])
+    sphere_level_set_data = sphere_level_set.get_value(x, y)
+
+    sphere_tanh = level_set_to_tanh(sphere_level_set_data, 1)
+
+    plotter = Plot2DContourf(x, y, sphere_tanh)
+    plotter.save("contour.png")
+
+
+find_positions_from_contact_angle(math.pi / 2, 20)
