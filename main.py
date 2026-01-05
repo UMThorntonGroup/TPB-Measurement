@@ -6,9 +6,7 @@ class LevelSet:
     def __init__(self):
         pass
 
-    def get_value(self, x, y=None, z=None):
-        # TODO: Throw an error if the base class is called
-        # TODO: Add types
+    def get_value(self, *coords):
         pass
 
 
@@ -41,6 +39,42 @@ class SphereLevelSet(LevelSet):
             radius_squared += (coord - origin) ** 2
 
         return np.sqrt(radius_squared) - self.radius
+
+
+class PlaneLevelSet(LevelSet):
+    def __init__(self, normal, origin=None):
+        self.normal = np.asarray(normal, dtype=float)
+        if self.normal.ndim != 1:
+            raise ValueError("normal must be a 1D array-like")
+
+        norm = np.linalg.norm(self.normal)
+        if norm == 0:
+            raise ValueError("normal vector must be non-zero")
+        self.normal /= norm
+
+        if origin is None:
+            self.origin = None
+        else:
+            self.origin = np.asarray(origin, dtype=float)
+            if self.origin.ndim != 1:
+                raise ValueError("Origin must be 1D vector")
+
+    def get_value(self, *coords):
+        dim = len(coords)
+
+        if self.origin is None:
+            origin = np.zeros(dim)
+        else:
+            if len(self.origin) != dim:
+                raise ValueError(
+                    f"Origin dimension {len(self.origin)} does not match "
+                    f"input dimension {dim}"
+                )
+            origin = self.origin
+
+        x = np.stack(coords, axis=0)
+
+        return np.tensordot(self.normal, x - origin[:, None, None], axes=1)
 
 
 class Plot2DContourf:
@@ -76,6 +110,9 @@ x, y = np.meshgrid(positions, positions)
 
 sphere_level_set = SphereLevelSet(40, [50, 50])
 data = sphere_level_set.get_value(x, y)
+
+plane_level_set = PlaneLevelSet([0, 1], [40, 40])
+data = plane_level_set.get_value(x, y)
 
 plotter = Plot2DContourf(x, y, data)
 plotter.save("contour.png")
