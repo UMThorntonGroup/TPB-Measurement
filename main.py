@@ -105,6 +105,42 @@ class Plot2DContourf:
         self.fig.savefig(filename, dpi=300)
 
 
+class Plot2DTPB:
+    def __init__(self, x, y, data_1, data_2, data_3=None):
+        if data_3 is None:
+            data_3 = np.ones_like(data_1) - data_1 - data_2
+
+        if not np.allclose(data_1 + data_2 + data_3, np.ones_like(data_1)):
+            raise ValueError("The provided data must sum to 1")
+        if np.any((data_1 < 0) | (data_2 < 0) | (data_3 < 0)):
+            raise ValueError("The provided data must be non-negative")
+
+        self.fig, self.ax = plt.subplots()
+        self.ax.contour(x, y, data_1, levels=[0.5], colors="r", linewidths=2)
+        self.ax.contour(x, y, data_2, levels=[0.5], colors="g", linewidths=2)
+        self.ax.contour(x, y, data_3, levels=[0.5], colors="b", linewidths=2)
+
+        # Identify the TPB points where all three phases are present
+        min = 0.1
+        is_TPB = (data_1 > min) & (data_2 > min) & (data_3 > min)
+
+        combined = data_1 * data_2 * data_3
+        self.ax.imshow(
+            is_TPB,
+            origin="lower",
+            extent=(x.min(), x.max(), y.min(), y.max()),
+            cmap="gray",
+            alpha=0.3,
+            interpolation="nearest",
+        )
+        self.ax.contourf(x, y, combined)
+        self.ax.set_ylim([15, 25])
+        self.ax.set_xlim([20, 40])
+
+    def save(self, filename: str):
+        self.fig.savefig(filename, dpi=300)
+
+
 def level_set_to_tanh(data, interfacial_width):
     """
     Convert a level-set field to a tanh ranging from 0 to 1
@@ -153,9 +189,22 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     sphere_level_set = SphereLevelSet(radius, [sphere_x_position, sphere_y_position])
     sphere_level_set_data = sphere_level_set.get_value(x, y)
 
-    sphere_tanh = level_set_to_tanh(sphere_level_set_data, 1)
+    # Note that this constructs the full sphere, however to simulate
+    # the triple-boundary we have to cut-off the sphere where it intersects
+    # the plane. This is trivial with level-set as we take minimum of the two sets
+    # From there, we can calculate the third phase and recompute the sphere phase
+    interfacial_width = 1
+    combined_level_set = np.minimum(sphere_level_set_data, plane_level_set_data)
+    combined_tanh = level_set_to_tanh(combined_level_set, 1)
 
-    plotter = Plot2DContourf(x, y, sphere_tanh)
+    # Convert the level-set fields to tanh
+    sphere_tanh = level_set_to_tanh(sphere_level_set_data, interfacial_width)
+    plane_tanh = level_set_to_tanh(plane_level_set_data, interfacial_width)
+
+    matrix_tanh = 1.0 - combined_tanh
+    sphere_tanh = combined_tanh - plane_tanh
+
+    plotter = Plot2DTPB(x, y, plane_tanh, sphere_tanh)
     plotter.save("contour.png")
 
 
