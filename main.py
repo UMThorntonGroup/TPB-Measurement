@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import vtk.util.numpy_support
 
 
 class LevelSet:
@@ -76,6 +77,107 @@ class PlaneLevelSet(LevelSet):
         x = np.stack(coords, axis=0)
 
         return np.tensordot(self.normal, x - origin[:, None, None], axes=1)
+
+
+class NumericalSchemes:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def FOU(data, **spacings):
+        """
+        Compute the gradient of some data using the first-order upwind
+        method using some spacing.
+
+        data - a structured array of data
+        spacings - a list of spacing in each cartesian direction
+        """
+        dim = len(np.shape(data))
+
+        if dim != len(spacings):
+            raise ValueError("Provided more spacings than space dimensions in the data")
+
+        gradients = []
+        for axis, h in enumerate(spacings):
+            if h <= 0:
+                raise ValueError("Spacings must be positive")
+
+            forward_diff = data - np.roll(data, shift=1, axis=axis)
+            backward_diff = np.roll(data, shift=-1, axis=axis) - data
+
+            forward_mask = np.max(data, 0)
+            backward_mask = np.min(data, 0)
+
+            gradients.append(
+                forward_mask * forward_diff / h + backward_mask * backward_diff / h
+            )
+
+        return gradients
+
+
+class Output:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def NumpyToVTK(data, filename: str = "test.vtk", time: float = 0.0):
+        data_type = vtk.VTK_FLOAT
+        shape = data.shape
+
+        # Flatten the data array so we only to to convert the numpy array once
+        flat_data_array = data.flatten()
+        vtk_data = vtk.util.numpy_support.numpy_to_vtk(
+            num_array=flat_data_array, deep=True, array_type=data_type
+        )
+
+        # Create the rectilinear grid object
+        grid = vtk.vtkRectilinearGrid()
+
+        grid.GetPointData().SetScalars(vtk_data)
+
+        if len(shape) == 3:
+            grid.SetDimensions(shape[0], shape[1], shape[2])
+
+            x = np.linspace(0, 100, shape[0])
+            y = np.linspace(0, 100, shape[1])
+            z = np.linspace(0, 100, shape[2])
+
+            vtk_x = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=x, deep=True, array_type=data_type
+            )
+            vtk_y = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=y, deep=True, array_type=data_type
+            )
+            vtk_z = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=z, deep=True, array_type=data_type
+            )
+
+            grid.SetXCoordinates(vtk_x)
+            grid.SetYCoordinates(vtk_y)
+            grid.SetZCoordinates(vtk_z)
+
+        elif len(shape) == 2:
+            grid.SetDimensions(shape[0], shape[1], 1)
+
+            x = np.linspace(0, 100, shape[0])
+            y = np.linspace(0, 100, shape[1])
+
+            vtk_x = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=x, deep=True, array_type=data_type
+            )
+            vtk_y = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=y, deep=True, array_type=data_type
+            )
+
+            grid.SetXCoordinates(vtk_x)
+            grid.SetYCoordinates(vtk_y)
+        else:
+            raise ValueError("Invalid dimension")
+
+        writer = vtk.vtkRectilinearGridWriter()
+        writer.SetFileName(filename)
+        writer.SetInputData(grid)
+        writer.Write()
 
 
 class Plot2DContourf:
@@ -203,6 +305,8 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
 
     matrix_tanh = 1.0 - combined_tanh
     sphere_tanh = combined_tanh - plane_tanh
+
+    Output.NumpyToVTK(combined_level_set)
 
     plotter = Plot2DTPB(x, y, plane_tanh, sphere_tanh)
     plotter.save("contour.png")
