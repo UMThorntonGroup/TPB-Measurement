@@ -67,13 +67,6 @@ class Output:
         writer.Write()
 
 
-# def level_set_to_tanh(data, interfacial_width):
-#     """
-#     Convert a level-set field to a tanh ranging from 0 to 1
-#     """
-#     return 0.5 * (1 - np.tanh(data / (np.sqrt(2) * interfacial_width)))
-#
-#
 # def find_positions_from_contact_angle(contact_angle: float, radius: float):
 #     """
 #     This is a little helper function that helps find the
