@@ -11,6 +11,10 @@ dependencies = [
     "vtk (>=9.5.2,<10.0.0)"
 ]
 
+[tool.poetry]
+packages = [
+  { include = "tpb-measurement", from = "src" }
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
