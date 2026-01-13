@@ -3,3 +3,6 @@
 
 # IDE environments
 **/.idea
+
+# Python files
+**/__pycache__
