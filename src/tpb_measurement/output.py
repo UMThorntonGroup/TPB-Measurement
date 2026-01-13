@@ -82,6 +82,19 @@ class Output:
 
             grid.SetXCoordinates(vtk_x)
             grid.SetYCoordinates(vtk_y)
+        elif len(shape) == 1:
+            grid.SetDimensions(shape[0], 1, 1)
+
+            if domain_size is None:
+                x = np.linspace(0, 1, shape[0])
+            else:
+                x = np.linspace(0, domain_size[0], shape[0])
+
+            vtk_x = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=x, deep=True, array_type=data_type
+            )
+
+            grid.SetXCoordinates(vtk_x)
         else:
             raise ValueError("Invalid dimension")
 
