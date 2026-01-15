@@ -1,7 +1,5 @@
 import numpy as np
 
-from tpb_measurement.output import Output
-
 
 class RenameMe:
     def __init__(
@@ -48,7 +46,6 @@ class RenameMe:
             self._update_ghosts()
 
             time += dt
-            Output.NumpyToVTK(self.data, f"test_{i}.vtk", time=time)
 
     def _remove_ghosts(self):
         return self.ghost_data[self.slices]

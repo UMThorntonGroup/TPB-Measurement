@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import vtk.util.numpy_support
 
@@ -7,25 +9,35 @@ class Output:
         pass
 
     @staticmethod
-    def NumpyToVTK(
-        data,
-        filename: str = "test.vtk",
+    def numpy_to_rectilinear_vtk(
+        fields: dict[str, np.ndarray],
+        filename: str = "test.vtr",
         time: float = 0.0,
         domain_size: np.ndarray = None,
     ):
         data_type = vtk.VTK_FLOAT
-        shape = data.shape
 
-        # Flatten the data array so we only to convert the numpy array once
-        flat_data_array = data.flatten()
-        vtk_data = vtk.util.numpy_support.numpy_to_vtk(
-            num_array=flat_data_array, deep=True, array_type=data_type
-        )
+        # Use first field to define grid shape
+        first_key = next(iter(fields))
+        shape = fields[first_key].shape
 
         # Create the rectilinear grid object
         grid = vtk.vtkRectilinearGrid()
 
-        grid.GetPointData().SetScalars(vtk_data)
+        # Add the data
+        for name, data in fields.items():
+            if data.shape != shape:
+                raise ValueError(f"Field '{name}' has mismatched shape")
+
+            flat_data = data.flatten()
+            vtk_array = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=flat_data, deep=True, array_type=data_type
+            )
+            vtk_array.SetName(name)
+
+            grid.GetPointData().AddArray(vtk_array)
+
+        grid.GetPointData().SetActiveScalars(first_key)
 
         time_array = vtk.vtkFloatArray()
         time_array.SetName("TIME")
@@ -98,7 +110,24 @@ class Output:
         else:
             raise ValueError("Invalid dimension")
 
-        writer = vtk.vtkRectilinearGridWriter()
-        writer.SetFileName(filename)
-        writer.SetInputData(grid)
-        writer.Write()
+        # Grab the extension of the filename
+        ext = Path(filename).suffix.lower()
+
+        if ext == ".vtk":
+            writer = vtk.vtkRectilinearGridWriter()
+            writer.SetFileName(filename)
+            writer.SetInputData(grid)
+            writer.Write()
+
+        elif ext == ".vtr":
+            writer = vtk.vtkXMLRectilinearGridWriter()
+            writer.SetFileName(filename)
+            writer.SetInputData(grid)
+            writer.SetDataModeToBinary()  # or ASCII if you prefer
+            writer.Write()
+
+        else:
+            raise ValueError(
+                f"Unsupported file extension '{ext}'. "
+                "Use '.vtk' (legacy) or '.vtr' (VTK XML)."
+            )
