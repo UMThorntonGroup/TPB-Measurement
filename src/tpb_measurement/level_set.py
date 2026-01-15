@@ -72,6 +72,5 @@ class PlaneLevelSet(LevelSet):
 
     def get_value(self, *coords):
         super().get_value(*coords)
-        x = np.stack(coords, axis=0)
-        origin = self.origin[:, None, None]
-        return np.tensordot(self.normal, x - origin, axes=1)
+        x = np.stack(coords, axis=-1)
+        return np.sum((x - self.origin) * self.normal, axis=-1)

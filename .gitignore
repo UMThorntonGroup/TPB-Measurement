@@ -6,3 +6,7 @@
 
 # Python files
 **/__pycache__
+
+# Output files
+*.vtk
+*.vtr

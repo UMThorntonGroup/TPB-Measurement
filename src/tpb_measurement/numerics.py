@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class RenameMe:
+class NormalData:
     def __init__(
         self,
         data: np.ndarray,
@@ -23,10 +23,7 @@ class RenameMe:
 
         self.gradient_scratch_data = np.zeros(self.data_shape + (self.ndim,))
 
-    def run(self):
-        h = 1
-        dt = 0.5
-        time = 0
+    def get_normal(self, h: float = 1):
         # Compute the velocity for the upwinding as the central different
         # gradient note that this velocity must all be unity
         self._central_difference_gradient(h)
@@ -36,16 +33,26 @@ class RenameMe:
         self.gradient_scratch_data[
             np.where(self.gradient_scratch_data < 0)
         ] = -1
-        velocity = np.ones_like(self.gradient_scratch_data)
 
-        for i in range(10):
-            self._first_order_upwind(velocity, h)
-            self.data -= dt * np.sum(
-                velocity * self.gradient_scratch_data, axis=-1
-            )
-            self._update_ghosts()
+        # First order upwind to get the gradients
+        self._first_order_upwind(self.gradient_scratch_data, h)
 
-            time += dt
+        # Finally, find the normal
+        self._find_normal()
+
+        return self.gradient_scratch_data
+
+    def _find_normal(self, epsilon: float = 1e-6):
+        # Compute vector magnitude (L2 norm)
+        norm = np.linalg.norm(
+            self.gradient_scratch_data, axis=-1, keepdims=True
+        )
+
+        # Avoid division by zero
+        norm = np.maximum(norm, epsilon)
+
+        # Normalize
+        self.gradient_scratch_data /= norm
 
     def _remove_ghosts(self):
         return self.ghost_data[self.slices]
@@ -61,7 +68,7 @@ class RenameMe:
             ) / (2.0 * h)
 
             # Truncate the data and add to the scratch
-            self.gradient_scratch_data[..., axis] = grad[self.slices[axis]]
+            self.gradient_scratch_data[..., axis] = grad[self.slices]
 
     def _first_order_upwind(self, velocity: np.ndarray, h: float = 1):
         for axis in range(self.ndim):
@@ -80,16 +87,9 @@ class RenameMe:
 
             # Find the upwind gradient
             grad = (
-                fwd_grad[self.slices[axis]] * fwd_vel
-                + bwd_grad[self.slices[axis]] * bwd_vel
+                fwd_grad[self.slices] * fwd_vel
+                + bwd_grad[self.slices] * bwd_vel
             )
 
             # Add back into the scratch data
             self.gradient_scratch_data[..., axis] = grad
-
-
-x = np.linspace(0, np.pi, 50)
-data = np.sin(x)
-
-test = RenameMe(data, 1, pad_mode="wrap")
-test.run()
