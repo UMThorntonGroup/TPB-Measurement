@@ -79,6 +79,19 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     matrix_normal = numerics.NormalData(matrix_level_set_data)
     matrix_normal_data = matrix_normal.get_normal(h)
 
+    # If we're in 2D, we're going to convert the normal vectors to 3D
+    # to make some of the later analysis later.
+    if sphere_normal_data.shape[-1] == 2:
+
+        def add_zero_z_component(array):
+            zeros = np.zeros((array.shape[0], array.shape[1], 1))
+            new_array = np.concatenate((array, zeros), axis=2)
+            return new_array
+
+        sphere_normal_data = add_zero_z_component(sphere_normal_data)
+        plane_normal_data = add_zero_z_component(plane_normal_data)
+        matrix_normal_data = add_zero_z_component(matrix_normal_data)
+
     # Express the normals for each of the 6 distinct interfaces. Note
     # that the interfaces are given by the 0 level-set between two
     # phases. However, due to the resolution of grid this has to be
@@ -88,65 +101,91 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     plane_zero = np.isclose(plane_level_set_data, 0, atol=tolerance)
     matrix_zero = np.isclose(matrix_level_set_data, 0, atol=tolerance)
 
+    # Let us consider each triple phase boundary as a single voxel.
+    # I don't like this in terms of connectivity, but it should be fine
     triple_phase_boundary = sphere_zero & plane_zero & matrix_zero
 
+    # Also grab the interface masks
     sphere_plane_interface = sphere_zero & plane_zero
     sphere_matrix_interface = sphere_zero & matrix_zero
     plane_matrix_interface = plane_zero & matrix_zero
 
-    # We also create a looser tolerance for the TPB neighborhood
-    tolerance = 2 * h
-    sphere_zero = np.isclose(sphere_level_set_data, 0, atol=tolerance)
-    plane_zero = np.isclose(plane_level_set_data, 0, atol=tolerance)
-    matrix_zero = np.isclose(matrix_level_set_data, 0, atol=tolerance)
-    triple_phase_neighborhood = sphere_zero & plane_zero & matrix_zero
+    # Now we're going to find the triple phase boundary direction
+    # this direction is orthogonal to all the normal vectors above.
+    def compute_B_ij(b_1, b_2, b_3, i, j):
+        return (
+            b_1[..., i] * b_1[..., j]
+            + b_2[..., i] * b_2[..., j]
+            + b_3[..., i] * b_3[..., j]
+        )
+
+    def compute_lambda(a, b_1, b_2, b_3):
+        for axis in range(a.shape[-1]):
+            print(axis)
+
+    tpb_direction_candidates = np.cross(
+        matrix_normal_data[np.where(triple_phase_boundary)],
+        plane_normal_data[np.where(triple_phase_boundary)],
+    )
+    print(tpb_direction_candidates)
+    compute_lambda(
+        tpb_direction_candidates, sphere_normal, plane_normal, matrix_normal
+    )
 
     # We're going to switch up the notation a little such that the
     # sphere is the Ni phase, the plane is the YSZ phase, and the matrix
     # is the pore phase
-    normal_ni_pore_interface = sphere_normal_data[
-        np.where(sphere_matrix_interface & triple_phase_neighborhood)
-    ]
-    normal_ni_ysz_interface = sphere_normal_data[
-        np.where(sphere_plane_interface & triple_phase_neighborhood)
-    ]
-    normal_ysz_ni_interface = plane_normal_data[
-        np.where(sphere_plane_interface & triple_phase_neighborhood)
-    ]
-    normal_ysz_pore_interface = plane_normal_data[
-        np.where(plane_matrix_interface & triple_phase_neighborhood)
-    ]
-    normal_pore_ni_interface = matrix_normal_data[
-        np.where(sphere_matrix_interface & triple_phase_neighborhood)
-    ]
-    normal_pore_ysz_interface = matrix_normal_data[
-        np.where(plane_matrix_interface & triple_phase_neighborhood)
-    ]
+    # normal_ni_pore_interface = sphere_normal_data[
+    #     np.where(sphere_matrix_interface & triple_phase_neighborhood)
+    # ]
+    # normal_ni_ysz_interface = sphere_normal_data[
+    #     np.where(sphere_plane_interface & triple_phase_neighborhood)
+    # ]
+    # normal_ysz_ni_interface = plane_normal_data[
+    #     np.where(sphere_plane_interface & triple_phase_neighborhood)
+    # ]
+    # normal_ysz_pore_interface = plane_normal_data[
+    #     np.where(plane_matrix_interface & triple_phase_neighborhood)
+    # ]
+    # normal_pore_ni_interface = matrix_normal_data[
+    #     np.where(sphere_matrix_interface & triple_phase_neighborhood)
+    # ]
+    # normal_pore_ysz_interface = matrix_normal_data[
+    #     np.where(plane_matrix_interface & triple_phase_neighborhood)
+    # ]
 
     # Grab the angles from each of the opposite pairs
     # Note that we have unequal arrays of the normal pairs so we need to do
     # some matrix multiplication to get all enumerations
-    dot = np.ravel(
-        np.matmul(
-            normal_ni_pore_interface, np.transpose(normal_ni_ysz_interface)
-        )
-    )
-    angle_ni = 180.0 - 180.0 / np.pi * np.acos(dot)
-    dot = np.ravel(
-        np.matmul(
-            normal_ysz_ni_interface, np.transpose(normal_ysz_pore_interface)
-        )
-    )
-    angle_ysz = 180.0 - 180.0 / np.pi * np.acos(dot)
-    dot = np.ravel(
-        np.matmul(
-            normal_pore_ni_interface, np.transpose(normal_pore_ysz_interface)
-        )
-    )
-    angle_pore = 180.0 - 180.0 / np.pi * np.acos(dot)
-    print(angle_ni)
-    print(angle_ysz)
-    print(angle_pore)
+    # dot = np.ravel(
+    #     np.matmul(
+    #         normal_ni_pore_interface, np.transpose(normal_ni_ysz_interface)
+    #     )
+    # )
+    # dot = np.clip(dot, -1, 1)
+    # angle_ni = 180.0 - 180.0 / np.pi * np.acos(dot)
+    # dot = np.ravel(
+    #     np.matmul(
+    #         normal_ysz_ni_interface, np.transpose(normal_ysz_pore_interface)
+    #     )
+    # )
+    # dot = np.clip(dot, -1, 1)
+    # angle_ysz = 180.0 - 180.0 / np.pi * np.acos(dot)
+    # dot = np.ravel(
+    #     np.matmul(
+    #         normal_pore_ni_interface, np.transpose(normal_pore_ysz_interface)
+    #     )
+    # )
+    # dot = np.clip(dot, -1, 1)
+    # angle_pore = 180.0 - 180.0 / np.pi * np.acos(dot)
+
+    # Now that we've got a bunch of potential angles we need to downselect
+    # angle_ni = np.unique(angle_ni)
+    # angle_ysz = np.unique(angle_ysz)
+    # angle_pore = np.unique(angle_pore)
+    # print(angle_ni)
+    # print(angle_ysz)
+    # print(angle_pore)
 
     # Output the data
     fields = {
@@ -157,7 +196,6 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
         "sphere_matrix": sphere_matrix_interface,
         "plane_matrix": plane_matrix_interface,
         "triple_phase_boundary": triple_phase_boundary,
-        "triple_phase_neighborhood": triple_phase_neighborhood,
     }
     output.Output.numpy_to_rectilinear_vtk(
         fields, domain_size=np.array([x_size, y_size])
