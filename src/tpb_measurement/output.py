@@ -9,46 +9,12 @@ class Output:
         pass
 
     @staticmethod
-    def numpy_to_rectilinear_vtk(
-        fields: dict[str, np.ndarray],
-        filename: str = "test.vtr",
-        time: float = 0.0,
-        domain_size: np.ndarray = None,
+    def _coord_setup(
+        shape: np.ndarray,
+        domain_size: np.ndarray,
+        grid: vtk.vtkRectilinearGrid,
+        data_type=vtk.VTK_FLOAT,
     ):
-        data_type = vtk.VTK_FLOAT
-
-        # Use first field to define grid shape
-        first_key = next(iter(fields))
-        shape = fields[first_key].shape
-
-        # Create the rectilinear grid object
-        grid = vtk.vtkRectilinearGrid()
-
-        # Add the data
-        for name, data in fields.items():
-            if data.shape != shape:
-                raise ValueError(f"Field '{name}' has mismatched shape")
-
-            flat_data = data.flatten()
-            vtk_array = vtk.util.numpy_support.numpy_to_vtk(
-                num_array=flat_data, deep=True, array_type=data_type
-            )
-            vtk_array.SetName(name)
-
-            grid.GetPointData().AddArray(vtk_array)
-
-        grid.GetPointData().SetActiveScalars(first_key)
-
-        time_array = vtk.vtkFloatArray()
-        time_array.SetName("TIME")
-        time_array.SetNumberOfComponents(1)
-        time_array.SetNumberOfTuples(1)
-        time_array.SetValue(0, time)
-        grid.GetFieldData().AddArray(time_array)
-
-        if domain_size is not None and len(shape) != len(domain_size):
-            raise ValueError("Dimension mismatch between data and domain_size")
-
         if len(shape) == 3:
             grid.SetDimensions(shape[0], shape[1], shape[2])
 
@@ -110,6 +76,8 @@ class Output:
         else:
             raise ValueError("Invalid dimension")
 
+    @staticmethod
+    def _writer_setup(filename: str, grid: vtk.vtkRectilinearGrid):
         # Grab the extension of the filename
         ext = Path(filename).suffix.lower()
 
@@ -123,7 +91,7 @@ class Output:
             writer = vtk.vtkXMLRectilinearGridWriter()
             writer.SetFileName(filename)
             writer.SetInputData(grid)
-            writer.SetDataModeToBinary()  # or ASCII if you prefer
+            writer.SetDataModeToBinary()
             writer.Write()
 
         else:
@@ -131,3 +99,86 @@ class Output:
                 f"Unsupported file extension '{ext}'. "
                 "Use '.vtk' (legacy) or '.vtr' (VTK XML)."
             )
+
+    @staticmethod
+    def numpy_to_rectilinear_vtk(
+        fields: dict[str, np.ndarray],
+        filename: str = "test.vtr",
+        time: float = 0.0,
+        domain_size: np.ndarray = None,
+    ):
+        data_type = vtk.VTK_FLOAT
+
+        # Use first field to define grid. To do so, we next to determine
+        # if it's a scalar or vector
+        first_key = next(iter(fields))
+        first_data = fields[first_key]
+        if first_data.ndim == 2:
+            shape = first_data.shape
+        elif first_data.ndim == 3 and first_data.shape[-1] in (2, 3):
+            # NOTE: This can technically misinterpret data is our domain
+            # is 2 or 3 points in a certain direction
+            shape = first_data.shape[:-1]
+        elif first_data.ndim == 3:
+            shape = first_data.shape
+        elif first_data.ndim == 4 and first_data.shape[-1] in (2, 3):
+            shape = first_data.shape[:-1]
+        else:
+            raise ValueError("Field must be scalar or vector.")
+
+        # Create the rectilinear grid object
+        grid = vtk.vtkRectilinearGrid()
+
+        # Add the data
+        for name, data in fields.items():
+            # 2D scalar
+            if data.ndim == 2:
+                if data.shape != shape:
+                    raise ValueError(f"Field '{name}' has mismatched shape")
+                flat_data = data.flatten()
+                comps = 1
+            # 2D vector
+            elif data.ndim == 3 and data.shape[-1] in (2, 3):
+                if data.shape[:-1] != shape:
+                    raise ValueError(f"Field '{name}' has mismatched shape")
+                flat_data = data.reshape(-1, data.shape[-1])
+                comps = data.shape[-1]
+            # 3D scalar
+            elif data.ndim == 3:
+                if data.shape != shape:
+                    raise ValueError(f"Field '{name}' has mismatched shape")
+                flat_data = data.flatten()
+                comps = 1
+            # 3D vector
+            elif data.ndim == 4 and data.shape[-1] in (2, 3):
+                if data.shape[:-1] != shape:
+                    raise ValueError(f"Field '{name}' has mismatched shape")
+                flat_data = data.reshape(-1, data.shape[-1])
+                comps = data.shape[-1]
+            else:
+                raise ValueError(
+                    f"Field '{name}' must be 2D/3D scalar or 2D/3D vector."
+                )
+
+            vtk_array = vtk.util.numpy_support.numpy_to_vtk(
+                num_array=flat_data, deep=True, array_type=data_type
+            )
+            vtk_array.SetName(name)
+            vtk_array.SetNumberOfComponents(comps)
+
+            grid.GetPointData().AddArray(vtk_array)
+
+        grid.GetPointData().SetActiveScalars(first_key)
+
+        time_array = vtk.vtkFloatArray()
+        time_array.SetName("TIME")
+        time_array.SetNumberOfComponents(1)
+        time_array.SetNumberOfTuples(1)
+        time_array.SetValue(0, time)
+        grid.GetFieldData().AddArray(time_array)
+
+        if domain_size is not None and len(shape) != len(domain_size):
+            raise ValueError("Dimension mismatch between data and domain_size")
+
+        Output._coord_setup(shape, domain_size, grid, data_type)
+        Output._writer_setup(filename, grid)
