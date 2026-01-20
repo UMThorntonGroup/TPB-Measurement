@@ -96,14 +96,38 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     # that the interfaces are given by the 0 level-set between two
     # phases. However, due to the resolution of grid this has to be
     # approximated by half the grid size diagonal ~0.7h
-    tolerance = 0.7 * h
-    sphere_zero = np.isclose(sphere_level_set_data, 0, atol=tolerance)
-    plane_zero = np.isclose(plane_level_set_data, 0, atol=tolerance)
-    matrix_zero = np.isclose(matrix_level_set_data, 0, atol=tolerance)
+    level_set_tolerance = 0.7 * h
+    sphere_zero = np.isclose(
+        sphere_level_set_data, 0, atol=level_set_tolerance
+    )
+    plane_zero = np.isclose(plane_level_set_data, 0, atol=level_set_tolerance)
+    matrix_zero = np.isclose(
+        matrix_level_set_data, 0, atol=level_set_tolerance
+    )
 
     # Let us consider each triple phase boundary as a single voxel.
     # I don't like this in terms of connectivity, but it should be fine
     triple_phase_boundary = sphere_zero & plane_zero & matrix_zero
+
+    # Throw out TPB voxels that are too close to the boundary
+    boundary_box_length = 2
+    old_triple_phase_boundary = triple_phase_boundary.copy()
+    mask = np.ones_like(triple_phase_boundary, dtype=bool)
+    for axis in range(triple_phase_boundary.ndim):
+        slicer = [slice(None)] * triple_phase_boundary.ndim
+
+        slicer[axis] = slice(0, boundary_box_length)
+        mask[tuple(slicer)] = False
+
+        slicer[axis] = slice(-boundary_box_length, None)
+        mask[tuple(slicer)] = False
+    triple_phase_boundary &= mask
+    if not np.all(old_triple_phase_boundary == triple_phase_boundary):
+        print(
+            "Warning: some TPB voxels were deleted due to their proximity"
+            " to the boundary."
+        )
+    del old_triple_phase_boundary
 
     # Also grab the interface masks
     sphere_plane_interface = sphere_zero & plane_zero
@@ -112,25 +136,234 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
 
     # Now we're going to find the triple phase boundary direction
     # this direction is orthogonal to all the normal vectors above.
-    def compute_B_ij(b_1, b_2, b_3, i, j):
-        return (
-            b_1[..., i] * b_1[..., j]
-            + b_2[..., i] * b_2[..., j]
-            + b_3[..., i] * b_3[..., j]
+    def update_a(a, b_1, b_2, b_3):
+        def compute_B_ij(i, j):
+            return (
+                b_1[..., i] * b_1[..., j]
+                + b_2[..., i] * b_2[..., j]
+                + b_3[..., i] * b_3[..., j]
+            )
+
+        B_11 = compute_B_ij(0, 0)
+        B_22 = compute_B_ij(1, 1)
+        B_33 = compute_B_ij(2, 2)
+        B_12 = compute_B_ij(0, 1)
+        B_23 = compute_B_ij(1, 2)
+        B_13 = compute_B_ij(0, 2)
+        a_1 = a[..., 0]
+        a_2 = a[..., 1]
+        a_3 = a[..., 2]
+
+        def compute_lambda():
+            return (
+                B_11 * a_1**2
+                + B_22 * a_2**2
+                + B_33 * a_3**2
+                + 2.0
+                * (B_12 * a_1 * a_2 + B_23 * a_2 * a_3 + B_13 * a_1 * a_3)
+            )
+
+        lambda_values = compute_lambda()
+
+        delta_a_1 = -2.0 * (
+            (B_11 - lambda_values) * a_1 + B_12 * a_2 + B_13 * a_3
+        )
+        delta_a_2 = -2.0 * (
+            (B_22 - lambda_values) * a_2 + B_12 * a_1 + B_23 * a_3
+        )
+        delta_a_3 = -2.0 * (
+            (B_33 - lambda_values) * a_3 + B_13 * a_1 + B_23 * a_2
         )
 
-    def compute_lambda(a, b_1, b_2, b_3):
-        for axis in range(a.shape[-1]):
-            print(axis)
+        a[..., 0] += delta_a_1
+        a[..., 1] += delta_a_2
+        a[..., 2] += delta_a_3
 
+    # Truncate the data to the tpb voxels and save the original data
+    sphere_normal_data_original = sphere_normal_data.copy()
+    plane_normal_data_original = plane_normal_data.copy()
+    matrix_normal_data_original = matrix_normal_data.copy()
+    sphere_normal_data = sphere_normal_data[np.where(triple_phase_boundary)]
+    plane_normal_data = plane_normal_data[np.where(triple_phase_boundary)]
+    matrix_normal_data = matrix_normal_data[np.where(triple_phase_boundary)]
+
+    # Get the initial guess
     tpb_direction_candidates = np.cross(
-        matrix_normal_data[np.where(triple_phase_boundary)],
-        plane_normal_data[np.where(triple_phase_boundary)],
+        matrix_normal_data,
+        plane_normal_data,
     )
-    print(tpb_direction_candidates)
-    compute_lambda(
-        tpb_direction_candidates, sphere_normal, plane_normal, matrix_normal
-    )
+
+    iterations = 100
+    tolerance = 1.0e-6
+    temp_direction = tpb_direction_candidates.copy()
+    for i in range(iterations):
+        # Update a
+        update_a(
+            tpb_direction_candidates,
+            sphere_normal_data,
+            plane_normal_data,
+            matrix_normal_data,
+        )
+
+        # Compute the relative difference
+        rel_difference = np.abs(tpb_direction_candidates - temp_direction)
+        print(f"Iteration {i} max difference: {np.max(rel_difference)}")
+
+        # Update the temp
+        temp_direction = tpb_direction_candidates
+
+        if np.all(rel_difference < tolerance):
+            print(f"Converged at iteration {i}")
+            break
+        elif i == iterations - 1:
+            print(f"Failed to converge after {i} iterations")
+
+    # Once we've computed the TPB direction, we can compute the contact angles
+    # Do to do, we need to find the normal vectors at each of the interfaces
+    # project in the direction of the TPB. Importantly, these interface normal
+    # vectors must be in a goldilocks spot with respect to the distance from
+    # the TPB. To do so, we can implement a quality measure that is a product
+    # of the distance and the angle between opposite interface normals. Having
+    # the angle approach 180 degrees with a minimal distance will yield the
+    # highest quality.
+    def grab_nearby_vectors(box_length: int):
+        # Grab the indices of the TPBs
+        tpb = np.array(np.where(triple_phase_boundary))
+
+        # Grab the array of potential offsets
+        if triple_phase_boundary.ndim == 2:
+            offsets = np.array(
+                [
+                    (dx, dy)
+                    for dx in range(-box_length, box_length + 1)
+                    for dy in range(-box_length, box_length + 1)
+                ]
+            )
+
+        elif triple_phase_boundary.ndim == 3:
+            offsets = np.array(
+                [
+                    (dx, dy, dz)
+                    for dx in range(-box_length, box_length + 1)
+                    for dy in range(-box_length, box_length + 1)
+                    for dz in range(-box_length, box_length + 1)
+                ]
+            )
+        else:
+            raise ValueError(
+                "Triple phase boundary ndim not supported:"
+                f"{triple_phase_boundary.ndim}"
+            )
+
+        # Broadcast the addition of the offsets
+        # Note: tpb has mismatched indices. Hopefully, this doesn't
+        # mess up some of the stuff above...
+        expanded_tpb = np.transpose(tpb)[:, None, :] + offsets[None, :, :]
+
+        # Grab the distance from the TPB, which is simply the norm of the
+        # offset vector
+        tpb_distance = np.linalg.norm(offsets, axis=-1)
+
+        # Take the broadcasted region and filter based on the three interface
+        # types
+        for point_set in expanded_tpb:
+            # Convert the point set to index notation
+            # Why is python and numpy like this... indexing ..............
+            # ............................................................
+            # ahhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+            #
+            point_index_set = tuple(np.transpose(point_set))
+
+            # Grab the local mask from the neighbors
+            local_sphere_plane = sphere_plane_interface[point_index_set]
+            local_sphere_matrix = sphere_matrix_interface[point_index_set]
+            local_plane_matrix = plane_matrix_interface[point_index_set]
+
+            # Print a warning if we don't find enough points
+            if np.sum(local_sphere_plane) == 0:
+                print(
+                    "Warning: box scanning size too small, found 0 "
+                    "points at the sphere-plane interface."
+                )
+            if np.sum(local_sphere_matrix) == 0:
+                print(
+                    "Warning: box scanning size too small, found 0 "
+                    "points at the sphere-matrix interface."
+                )
+            if np.sum(local_plane_matrix) == 0:
+                print(
+                    "Warning: box scanning size too small, found 0 "
+                    "points at the plane-matrix interface."
+                )
+
+            def index_from_coords(data, coords):
+                coords = np.asarray(coords)
+                index_tuple = tuple(
+                    coords[:, j] for j in range(coords.shape[1])
+                )
+                return data[index_tuple]
+
+            # Grab the nearby normals
+            local_sphere_plane_indices = point_set[
+                np.where(local_sphere_plane)
+            ]
+            local_sphere_matrix_indices = point_set[
+                np.where(local_sphere_matrix)
+            ]
+            local_plane_matrix_indices = point_set[
+                np.where(local_plane_matrix)
+            ]
+
+            local_normal_sphere_sphere_plane_interface = index_from_coords(
+                sphere_normal_data_original, local_sphere_plane_indices
+            )
+            local_normal_sphere_sphere_matrix_interface = index_from_coords(
+                sphere_normal_data_original, local_sphere_matrix_indices
+            )
+
+            local_normal_plane_sphere_plane_interface = index_from_coords(
+                plane_normal_data_original, local_sphere_plane_indices
+            )
+            local_normal_plane_plane_matrix_interface = index_from_coords(
+                plane_normal_data_original, local_plane_matrix_indices
+            )
+
+            local_normal_plane_sphere_matrix_interface = index_from_coords(
+                matrix_normal_data_original, local_sphere_matrix_indices
+            )
+            local_normal_matrix_plane_matrix_interface = index_from_coords(
+                matrix_normal_data_original, local_plane_matrix_indices
+            )
+
+            # Grab the dot product of the orthogonal interface vectors pairs
+            # TODO: Don't clip the values and print an error instead
+            local_dot_sphere_plane = np.ravel(
+                np.matmul(
+                    local_normal_sphere_sphere_plane_interface,
+                    np.transpose(local_normal_plane_sphere_plane_interface),
+                )
+            )
+            local_dot_sphere_plane = np.clip(local_dot_sphere_plane, -1, 1)
+            local_dot_sphere_matrix = np.ravel(
+                np.matmul(
+                    local_normal_sphere_sphere_matrix_interface,
+                    np.transpose(local_normal_plane_sphere_matrix_interface),
+                )
+            )
+            local_dot_sphere_matrix = np.clip(local_dot_sphere_matrix, -1, 1)
+            local_dot_plane_matrix = np.ravel(
+                np.matmul(
+                    local_normal_plane_plane_matrix_interface,
+                    np.transpose(local_normal_matrix_plane_matrix_interface),
+                )
+            )
+            local_dot_plane_matrix = np.clip(local_dot_plane_matrix, -1, 1)
+            print(local_dot_sphere_plane)
+            print(local_dot_sphere_matrix)
+            print(local_dot_plane_matrix)
+            print(tpb_distance)
+
+    grab_nearby_vectors(boundary_box_length)
 
     # We're going to switch up the notation a little such that the
     # sphere is the Ni phase, the plane is the YSZ phase, and the matrix
