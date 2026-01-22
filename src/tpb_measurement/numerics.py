@@ -8,17 +8,17 @@ class NormalData:
         ghost_layer_depth: int = 1,
         pad_mode: str = "reflect",
     ):
-        self.data = data
-        self.data_shape = np.shape(data)
+        self.data = np.transpose(data)
+        self.data_shape = np.shape(self.data)
 
-        self.ndim = data.ndim
+        self.ndim = self.data.ndim
         self.pad_depth = ghost_layer_depth
         self.pad_mode = pad_mode
         self.slices = tuple(
             slice(self.pad_depth, -self.pad_depth) for _ in range(self.ndim)
         )
 
-        self.ghost_data = np.pad(data, self.pad_depth, mode=self.pad_mode)
+        self.ghost_data = np.pad(self.data, self.pad_depth, mode=self.pad_mode)
         self.ghost_data_shape = np.shape(self.ghost_data)
 
         self.gradient_scratch_data = np.zeros(self.data_shape + (self.ndim,))
@@ -33,7 +33,6 @@ class NormalData:
         self.gradient_scratch_data[
             np.where(self.gradient_scratch_data < 0)
         ] = -1
-
         # First order upwind to get the gradients
         self._first_order_upwind(self.gradient_scratch_data, h)
 
@@ -66,7 +65,6 @@ class NormalData:
                 np.roll(self.ghost_data, -1, axis=axis)
                 - np.roll(self.ghost_data, 1, axis=axis)
             ) / (2.0 * h)
-
             # Truncate the data and add to the scratch
             self.gradient_scratch_data[..., axis] = grad[self.slices]
 

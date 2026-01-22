@@ -429,6 +429,9 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
         "sphere_matrix": sphere_matrix_interface,
         "plane_matrix": plane_matrix_interface,
         "triple_phase_boundary": triple_phase_boundary,
+        "sphere_normal": sphere_normal_data_original,
+        "plane_normal": plane_normal_data_original,
+        "matrix_normal": matrix_normal_data_original,
     }
     output.Output.numpy_to_rectilinear_vtk(
         fields, domain_size=np.array([x_size, y_size])
