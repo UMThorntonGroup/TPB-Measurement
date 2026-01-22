@@ -17,7 +17,7 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     x_size = 100
     y_size = 100
 
-    h = 1
+    h = 5
 
     n_points_x = math.ceil(x_size / h)
     n_points_y = math.ceil(y_size / h)
@@ -92,6 +92,9 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
         plane_normal_data = add_zero_z_component(plane_normal_data)
         matrix_normal_data = add_zero_z_component(matrix_normal_data)
 
+    print(sphere_normal_data.shape)
+    print(plane_normal_data.shape)
+    print(matrix_normal_data.shape)
     # Express the normals for each of the 6 distinct interfaces. Note
     # that the interfaces are given by the 0 level-set between two
     # phases. However, due to the resolution of grid this has to be
@@ -438,4 +441,4 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     )
 
 
-find_positions_from_contact_angle(math.pi / 2, 20)
+find_positions_from_contact_angle(math.pi / 2, 30)

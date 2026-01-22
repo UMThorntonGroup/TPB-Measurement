@@ -8,7 +8,7 @@ class NormalData:
         ghost_layer_depth: int = 1,
         pad_mode: str = "reflect",
     ):
-        self.data = np.transpose(data)
+        self.data = data
         self.data_shape = np.shape(self.data)
 
         self.ndim = self.data.ndim
@@ -35,9 +35,19 @@ class NormalData:
         ] = -1
         # First order upwind to get the gradients
         self._first_order_upwind(self.gradient_scratch_data, h)
-
         # Finally, find the normal
         self._find_normal()
+
+        # Swap the x and y component in 2D
+        if self.ndim == 2:
+            self.gradient_scratch_data[..., [0, 1]] = (
+                self.gradient_scratch_data[..., [1, 0]]
+            )
+        # Swap the x, y, and z component in 3D
+        if self.ndim == 3:
+            self.gradient_scratch_data[..., [0, 1, 2]] = (
+                self.gradient_scratch_data[..., [2, 1, 0]]
+            )
 
         return self.gradient_scratch_data
 
