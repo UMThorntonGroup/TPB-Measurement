@@ -27,14 +27,14 @@ class NormalData:
         # Compute the velocity for the upwinding as the central different
         # gradient note that this velocity must all be unity
         self._central_difference_gradient(h)
-        self.gradient_scratch_data[
-            np.where(self.gradient_scratch_data > 0)
-        ] = 1
-        self.gradient_scratch_data[
-            np.where(self.gradient_scratch_data < 0)
-        ] = -1
+        # self.gradient_scratch_data[
+        #     np.where(self.gradient_scratch_data > 0)
+        # ] = 1
+        # self.gradient_scratch_data[
+        #     np.where(self.gradient_scratch_data < 0)
+        # ] = -1
         # First order upwind to get the gradients
-        self._first_order_upwind(self.gradient_scratch_data, h)
+        # self._first_order_upwind(self.gradient_scratch_data, h)
         # Finally, find the normal
         self._find_normal()
 
