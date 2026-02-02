@@ -1,11 +1,13 @@
 import math
 
 import numpy as np
+import matplotlib.pyplot as plt
+from tpb_measurement import level_set, numerics, output, angle
 
-from tpb_measurement import level_set, numerics, output
 
-
-def find_positions_from_contact_angle(contact_angle: float, radius: float):
+def find_positions_from_contact_angle(
+    contact_angle: float, radius: float, h: float, do_output: bool = False
+):
     """
     This is a little helper function that helps find the
     positions a plane and sphere level-set given some contact
@@ -14,10 +16,11 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     For now, it assumes that the domain size is 100 by 100 with
     100 points in either direction.
     """
+
+    contact_angle = np.pi / 180.0 * contact_angle
+
     x_size = 100
     y_size = 100
-
-    h = 5
 
     n_points_x = math.ceil(x_size / h)
     n_points_y = math.ceil(y_size / h)
@@ -59,164 +62,42 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     # the plane. This is trivial with level-set as we take minimum of the two
     # sets. From there, we can calculate the third phase and recompute the
     # sphere phase
-    matrix_level_set_data = -np.minimum(
-        sphere_level_set_data, plane_level_set_data
-    )
-    sphere_level_set_data = np.maximum(
-        sphere_level_set_data, -plane_level_set_data
-    )
+    matrix_level_set_data = -np.minimum(sphere_level_set_data, plane_level_set_data)
+    sphere_level_set_data = np.maximum(sphere_level_set_data, -plane_level_set_data)
 
     # Reshape the data
     sphere_level_set_data = np.reshape(sphere_level_set_data, original_shape)
     plane_level_set_data = np.reshape(plane_level_set_data, original_shape)
     matrix_level_set_data = np.reshape(matrix_level_set_data, original_shape)
 
-    # Compute the normals for each of the data sets
-    sphere_normal = numerics.NormalData(sphere_level_set_data)
-    sphere_normal_data = sphere_normal.get_normal(h)
-    plane_normal = numerics.NormalData(plane_level_set_data)
-    plane_normal_data = plane_normal.get_normal(h)
-    matrix_normal = numerics.NormalData(matrix_level_set_data)
-    matrix_normal_data = matrix_normal.get_normal(h)
-
-    # If we're in 2D, we're going to convert the normal vectors to 3D
-    # to make some of the later analysis later.
-    if sphere_normal_data.shape[-1] == 2:
-
-        def add_zero_z_component(array):
-            zeros = np.zeros((array.shape[0], array.shape[1], 1))
-            new_array = np.concatenate((array, zeros), axis=2)
-            return new_array
-
-        sphere_normal_data = add_zero_z_component(sphere_normal_data)
-        plane_normal_data = add_zero_z_component(plane_normal_data)
-        matrix_normal_data = add_zero_z_component(matrix_normal_data)
-
-    # Express the normals for each of the 6 distinct interfaces. Note
-    # that the interfaces are given by the 0 level-set between two
-    # phases. However, due to the resolution of grid this has to be
-    # approximated by half the grid size diagonal ~0.7h
-    level_set_tolerance = 0.7 * h
-    sphere_zero = np.isclose(
-        sphere_level_set_data, 0, atol=level_set_tolerance
+    # Create the the contact angle object
+    boundary_box_length = 5
+    contact_angle_object = angle.ContactAngle(
+        sphere_level_set_data,
+        plane_level_set_data,
+        matrix_level_set_data,
+        h,
+        boundary_box_length,
     )
-    plane_zero = np.isclose(plane_level_set_data, 0, atol=level_set_tolerance)
-    matrix_zero = np.isclose(
-        matrix_level_set_data, 0, atol=level_set_tolerance
-    )
+    contact_angle_object._get_normals()
+    contact_angle_object._get_masks()
+    contact_angle_object._find_triple_boundary_direction()
 
-    # Let us consider each triple phase boundary as a single voxel.
-    # I don't like this in terms of connectivity, but it should be fine
-    triple_phase_boundary = sphere_zero & plane_zero & matrix_zero
+    sphere_normal_data = contact_angle_object.n_1
+    plane_normal_data = contact_angle_object.n_2
+    matrix_normal_data = contact_angle_object.n_3
 
-    # Throw out TPB voxels that are too close to the boundary
-    boundary_box_length = 3
-    old_triple_phase_boundary = triple_phase_boundary.copy()
-    mask = np.ones_like(triple_phase_boundary, dtype=bool)
-    for axis in range(triple_phase_boundary.ndim):
-        slicer = [slice(None)] * triple_phase_boundary.ndim
+    triple_phase_boundary = contact_angle_object.interface_123
+    sphere_plane_interface = contact_angle_object.interface_12
+    sphere_matrix_interface = contact_angle_object.interface_13
+    plane_matrix_interface = contact_angle_object.interface_23
 
-        slicer[axis] = slice(0, boundary_box_length)
-        mask[tuple(slicer)] = False
-
-        slicer[axis] = slice(-boundary_box_length, None)
-        mask[tuple(slicer)] = False
-    triple_phase_boundary &= mask
-    if not np.all(old_triple_phase_boundary == triple_phase_boundary):
-        print(
-            "Warning: some TPB voxels were deleted due to their proximity"
-            " to the boundary."
-        )
-    del old_triple_phase_boundary
-
-    # Also grab the interface masks
-    sphere_plane_interface = sphere_zero & plane_zero
-    sphere_matrix_interface = sphere_zero & matrix_zero
-    plane_matrix_interface = plane_zero & matrix_zero
-
-    # Now we're going to find the triple phase boundary direction
-    # this direction is orthogonal to all the normal vectors above.
-    def update_a(a, b_1, b_2, b_3):
-        def compute_B_ij(i, j):
-            return (
-                b_1[..., i] * b_1[..., j]
-                + b_2[..., i] * b_2[..., j]
-                + b_3[..., i] * b_3[..., j]
-            )
-
-        B_11 = compute_B_ij(0, 0)
-        B_22 = compute_B_ij(1, 1)
-        B_33 = compute_B_ij(2, 2)
-        B_12 = compute_B_ij(0, 1)
-        B_23 = compute_B_ij(1, 2)
-        B_13 = compute_B_ij(0, 2)
-        a_1 = a[..., 0]
-        a_2 = a[..., 1]
-        a_3 = a[..., 2]
-
-        def compute_lambda():
-            return (
-                B_11 * a_1**2
-                + B_22 * a_2**2
-                + B_33 * a_3**2
-                + 2.0
-                * (B_12 * a_1 * a_2 + B_23 * a_2 * a_3 + B_13 * a_1 * a_3)
-            )
-
-        lambda_values = compute_lambda()
-
-        delta_a_1 = -2.0 * (
-            (B_11 - lambda_values) * a_1 + B_12 * a_2 + B_13 * a_3
-        )
-        delta_a_2 = -2.0 * (
-            (B_22 - lambda_values) * a_2 + B_12 * a_1 + B_23 * a_3
-        )
-        delta_a_3 = -2.0 * (
-            (B_33 - lambda_values) * a_3 + B_13 * a_1 + B_23 * a_2
-        )
-
-        a[..., 0] += delta_a_1
-        a[..., 1] += delta_a_2
-        a[..., 2] += delta_a_3
+    tpb_direction_candidates = contact_angle_object.tpb_directions
 
     # Truncate the data to the tpb voxels and save the original data
     sphere_normal_data_original = sphere_normal_data.copy()
     plane_normal_data_original = plane_normal_data.copy()
     matrix_normal_data_original = matrix_normal_data.copy()
-    sphere_normal_data = sphere_normal_data[np.where(triple_phase_boundary)]
-    plane_normal_data = plane_normal_data[np.where(triple_phase_boundary)]
-    matrix_normal_data = matrix_normal_data[np.where(triple_phase_boundary)]
-
-    # Get the initial guess
-    tpb_direction_candidates = np.cross(
-        matrix_normal_data,
-        plane_normal_data,
-    )
-
-    iterations = 100
-    tolerance = 1.0e-6
-    temp_direction = tpb_direction_candidates.copy()
-    for i in range(iterations):
-        # Update a
-        update_a(
-            tpb_direction_candidates,
-            sphere_normal_data,
-            plane_normal_data,
-            matrix_normal_data,
-        )
-
-        # Compute the relative difference
-        rel_difference = np.abs(tpb_direction_candidates - temp_direction)
-        print(f"Iteration {i} max difference: {np.max(rel_difference)}")
-
-        # Update the temp
-        temp_direction = tpb_direction_candidates
-
-        if np.all(rel_difference < tolerance):
-            print(f"Converged at iteration {i}")
-            break
-        elif i == iterations - 1:
-            print(f"Failed to converge after {i} iterations")
 
     # Once we've computed the TPB direction, we can compute the contact angles
     # Do to do, we need to find the normal vectors at each of the interfaces
@@ -226,6 +107,8 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     # of the distance and the angle between opposite interface normals. Having
     # the angle approach 180 degrees with a minimal distance will yield the
     # highest quality.
+    contact_angle_list = []
+
     def grab_nearby_vectors(box_length: int):
         # Grab the indices of the TPBs
         tpb = np.array(np.where(triple_phase_boundary))
@@ -266,7 +149,7 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
 
         # Take the broadcasted region and filter based on the three interface
         # types
-        for point_set in expanded_tpb:
+        for point_set_index, point_set in enumerate(expanded_tpb):
             # Convert the point set to index notation
             # Why is python and numpy like this... indexing ..............
             # ............................................................
@@ -298,53 +181,33 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
 
             def vector_data_from_coords(data, coords):
                 coords = np.asarray(coords)
-                index_tuple = tuple(
-                    coords[:, j] for j in range(coords.shape[1])
-                )
+                index_tuple = tuple(coords[:, j] for j in range(coords.shape[1]))
                 return data[index_tuple]
 
             # Grab the nearby normals
-            local_sphere_plane_indices = point_set[
-                np.where(local_sphere_plane)
-            ]
-            local_sphere_matrix_indices = point_set[
-                np.where(local_sphere_matrix)
-            ]
-            local_plane_matrix_indices = point_set[
-                np.where(local_plane_matrix)
-            ]
+            local_sphere_plane_indices = point_set[np.where(local_sphere_plane)]
+            local_sphere_matrix_indices = point_set[np.where(local_sphere_matrix)]
+            local_plane_matrix_indices = point_set[np.where(local_plane_matrix)]
 
-            local_normal_sphere_sphere_plane_interface = (
-                vector_data_from_coords(
-                    sphere_normal_data_original, local_sphere_plane_indices
-                )
+            local_normal_sphere_sphere_plane_interface = vector_data_from_coords(
+                sphere_normal_data_original, local_sphere_plane_indices
             )
-            local_normal_sphere_sphere_matrix_interface = (
-                vector_data_from_coords(
-                    sphere_normal_data_original, local_sphere_matrix_indices
-                )
+            local_normal_sphere_sphere_matrix_interface = vector_data_from_coords(
+                sphere_normal_data_original, local_sphere_matrix_indices
             )
 
-            local_normal_plane_sphere_plane_interface = (
-                vector_data_from_coords(
-                    plane_normal_data_original, local_sphere_plane_indices
-                )
+            local_normal_plane_sphere_plane_interface = vector_data_from_coords(
+                plane_normal_data_original, local_sphere_plane_indices
             )
-            local_normal_plane_plane_matrix_interface = (
-                vector_data_from_coords(
-                    plane_normal_data_original, local_plane_matrix_indices
-                )
+            local_normal_plane_plane_matrix_interface = vector_data_from_coords(
+                plane_normal_data_original, local_plane_matrix_indices
             )
 
-            local_normal_matrix_sphere_matrix_interface = (
-                vector_data_from_coords(
-                    matrix_normal_data_original, local_sphere_matrix_indices
-                )
+            local_normal_matrix_sphere_matrix_interface = vector_data_from_coords(
+                matrix_normal_data_original, local_sphere_matrix_indices
             )
-            local_normal_matrix_plane_matrix_interface = (
-                vector_data_from_coords(
-                    matrix_normal_data_original, local_plane_matrix_indices
-                )
+            local_normal_matrix_plane_matrix_interface = vector_data_from_coords(
+                matrix_normal_data_original, local_plane_matrix_indices
             )
 
             # Check that the sizes are the same between shared interfaces
@@ -379,9 +242,7 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
                 else:
                     mask = (data < min) | (data > max)
                 if np.any(mask):
-                    raise ValueError(
-                        f"Invalid range for data: {data[np.where(mask)]}"
-                    )
+                    raise ValueError(f"Invalid range for data: {data[np.where(mask)]}")
 
             local_dot_sphere_plane = np.vecdot(
                 local_normal_sphere_sphere_plane_interface,
@@ -414,8 +275,8 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
                 return 1 - (d + 1) / np.max(1.1 * (d + 1))
 
             def compute_quality(dot, distance):
-                return renormalize_dot_product(dot) * renormalize_distance(
-                    distance
+                return (
+                    renormalize_dot_product(dot) * 0.5 * renormalize_distance(distance)
                 )
 
             local_sphere_plane_quality = compute_quality(
@@ -434,89 +295,156 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
             def max_quality_index(quality):
                 return np.argmax(quality)
 
-            def print_info(context, dot, distance, quality):
-                print(
-                    f"{context}:\n"
-                    f"  dot: {dot[max_quality_index(quality)]}\n"
-                    f"  distance: {distance[max_quality_index(quality)]}\n"
-                    f"  quality: {quality[max_quality_index(quality)]}\n"
-                )
+            # Grab the max quality normal vectors
+            index_sphere_plane = max_quality_index(local_sphere_plane_quality)
+            index_sphere_matrix = max_quality_index(local_sphere_matrix_quality)
+            index_plane_matrix = max_quality_index(local_plane_matrix_quality)
 
-            print_info(
-                "sphere-plane",
-                local_dot_sphere_plane,
-                tpb_distance[np.where(local_sphere_plane)],
-                local_sphere_plane_quality,
+            max_quality_normal_sphere_sphere_plane_interface = (
+                local_normal_sphere_sphere_plane_interface[index_sphere_plane]
             )
-            print_info(
-                "sphere-matrix",
-                local_dot_sphere_matrix,
-                tpb_distance[np.where(local_sphere_matrix)],
-                local_sphere_matrix_quality,
+            max_quality_normal_plane_sphere_plane_interface = (
+                local_normal_plane_sphere_plane_interface[index_sphere_plane]
             )
-            print_info(
-                "plane-matrix",
-                local_dot_plane_matrix,
-                tpb_distance[np.where(local_plane_matrix)],
-                local_plane_matrix_quality,
+
+            max_quality_normal_sphere_sphere_matrix_interface = (
+                local_normal_sphere_sphere_matrix_interface[index_sphere_matrix]
             )
+            max_quality_normal_matrix_sphere_matrix_interface = (
+                local_normal_matrix_sphere_matrix_interface[index_sphere_matrix]
+            )
+
+            max_quality_normal_plane_plane_matrix_interface = (
+                local_normal_plane_plane_matrix_interface[index_plane_matrix]
+            )
+            max_quality_normal_matrix_plane_matrix_interface = (
+                local_normal_matrix_plane_matrix_interface[index_plane_matrix]
+            )
+
+            # Print some info about the max quality
+            print(
+                "\nSphere-Plane\n"
+                f"  dot product: {local_dot_sphere_plane[index_sphere_plane]}\n"
+                f"  distance: {tpb_distance[np.where(local_sphere_plane)][index_sphere_plane]}\n"
+            )
+            print(
+                "\nSphere-Matrix\n"
+                f"  dot product: {local_dot_sphere_matrix[index_sphere_matrix]}\n"
+                f"  distance: {tpb_distance[np.where(local_sphere_matrix)][index_sphere_matrix]}\n"
+            )
+            print(
+                "\nPlane-Matrix\n"
+                f"  dot product: {local_dot_plane_matrix[index_plane_matrix]}\n"
+                f"  distance: {tpb_distance[np.where(local_plane_matrix)][index_plane_matrix]}\n"
+            )
+
+            # Now that we have the normals, where the quality was good,
+            # we can project them onto the most likely TPB direction
+            # that was calculated earlier.
+            def project_onto_TPB_direction(normal, direction):
+                projection = np.cross(np.cross(direction, normal), direction)
+                projection /= np.linalg.norm(projection)
+
+                return projection
+
+            projected_normal_sphere_sphere_plane_interface = project_onto_TPB_direction(
+                max_quality_normal_sphere_sphere_plane_interface,
+                tpb_direction_candidates[point_set_index],
+            )
+            projected_normal_plane_sphere_plane_interface = project_onto_TPB_direction(
+                max_quality_normal_plane_sphere_plane_interface,
+                tpb_direction_candidates[point_set_index],
+            )
+
+            projected_normal_sphere_sphere_matrix_interface = (
+                project_onto_TPB_direction(
+                    max_quality_normal_sphere_sphere_matrix_interface,
+                    tpb_direction_candidates[point_set_index],
+                )
+            )
+            projected_normal_matrix_sphere_matrix_interface = (
+                project_onto_TPB_direction(
+                    max_quality_normal_matrix_sphere_matrix_interface,
+                    tpb_direction_candidates[point_set_index],
+                )
+            )
+
+            projected_normal_plane_plane_matrix_interface = project_onto_TPB_direction(
+                max_quality_normal_plane_plane_matrix_interface,
+                tpb_direction_candidates[point_set_index],
+            )
+            projected_normal_matrix_plane_matrix_interface = project_onto_TPB_direction(
+                max_quality_normal_matrix_plane_matrix_interface,
+                tpb_direction_candidates[point_set_index],
+            )
+
+            # Once we have the projected normals, they might not longer satisfy
+            # the parallel and opposite clause that we tested in the quality
+            # metric above. We correct this, by taking the vector along the
+            # direction of the hypotenuse of the other two.
+            def correct_opposite_parallel(vec_1, vec_2):
+                diff = vec_1 - vec_2
+                diff /= np.linalg.norm(diff)
+
+                return diff, -diff
+
+            (
+                corrected_normal_sphere_sphere_plane_interface,
+                corrected_normal_plane_sphere_plane_interface,
+            ) = correct_opposite_parallel(
+                projected_normal_sphere_sphere_plane_interface,
+                projected_normal_plane_sphere_plane_interface,
+            )
+
+            (
+                corrected_normal_sphere_sphere_matrix_interface,
+                corrected_normal_matrix_sphere_matrix_interface,
+            ) = correct_opposite_parallel(
+                projected_normal_sphere_sphere_matrix_interface,
+                projected_normal_matrix_sphere_matrix_interface,
+            )
+
+            (
+                corrected_normal_plane_plane_matrix_interface,
+                corrected_normal_matrix_plane_matrix_interface,
+            ) = correct_opposite_parallel(
+                projected_normal_plane_plane_matrix_interface,
+                projected_normal_matrix_plane_matrix_interface,
+            )
+
+            # Now, we can finally calculate the contact angles of the three
+            # phases.
+            def compute_contact_angle(vec_1, vec_2):
+                dot = np.vecdot(vec_1, vec_2)
+                angle = 180.0 - 180.0 / np.pi * np.acos(dot)
+                return angle
+
+            contact_angle_sphere = compute_contact_angle(
+                corrected_normal_sphere_sphere_plane_interface,
+                corrected_normal_sphere_sphere_matrix_interface,
+            )
+            contact_angle_plane = compute_contact_angle(
+                corrected_normal_plane_sphere_plane_interface,
+                corrected_normal_plane_plane_matrix_interface,
+            )
+            contact_angle_matrix = compute_contact_angle(
+                corrected_normal_matrix_sphere_matrix_interface,
+                corrected_normal_matrix_plane_matrix_interface,
+            )
+
+            print(f"Sphere contact angle {contact_angle_sphere}")
+            print(f"Plane contact angle {contact_angle_plane}")
+            print(f"Matrix contact angle {contact_angle_matrix}")
+            print(
+                f"Total angle {contact_angle_sphere + contact_angle_plane + contact_angle_matrix}\n"
+            )
+
+            contact_angle_list.append(contact_angle_sphere)
 
     grab_nearby_vectors(boundary_box_length)
 
-    # We're going to switch up the notation a little such that the
-    # sphere is the Ni phase, the plane is the YSZ phase, and the matrix
-    # is the pore phase
-    # normal_ni_pore_interface = sphere_normal_data[
-    #     np.where(sphere_matrix_interface & triple_phase_neighborhood)
-    # ]
-    # normal_ni_ysz_interface = sphere_normal_data[
-    #     np.where(sphere_plane_interface & triple_phase_neighborhood)
-    # ]
-    # normal_ysz_ni_interface = plane_normal_data[
-    #     np.where(sphere_plane_interface & triple_phase_neighborhood)
-    # ]
-    # normal_ysz_pore_interface = plane_normal_data[
-    #     np.where(plane_matrix_interface & triple_phase_neighborhood)
-    # ]
-    # normal_pore_ni_interface = matrix_normal_data[
-    #     np.where(sphere_matrix_interface & triple_phase_neighborhood)
-    # ]
-    # normal_pore_ysz_interface = matrix_normal_data[
-    #     np.where(plane_matrix_interface & triple_phase_neighborhood)
-    # ]
-
-    # Grab the angles from each of the opposite pairs
-    # Note that we have unequal arrays of the normal pairs so we need to do
-    # some matrix multiplication to get all enumerations
-    # dot = np.ravel(
-    #     np.matmul(
-    #         normal_ni_pore_interface, np.transpose(normal_ni_ysz_interface)
-    #     )
-    # )
-    # dot = np.clip(dot, -1, 1)
-    # angle_ni = 180.0 - 180.0 / np.pi * np.acos(dot)
-    # dot = np.ravel(
-    #     np.matmul(
-    #         normal_ysz_ni_interface, np.transpose(normal_ysz_pore_interface)
-    #     )
-    # )
-    # dot = np.clip(dot, -1, 1)
-    # angle_ysz = 180.0 - 180.0 / np.pi * np.acos(dot)
-    # dot = np.ravel(
-    #     np.matmul(
-    #         normal_pore_ni_interface, np.transpose(normal_pore_ysz_interface)
-    #     )
-    # )
-    # dot = np.clip(dot, -1, 1)
-    # angle_pore = 180.0 - 180.0 / np.pi * np.acos(dot)
-
-    # Now that we've got a bunch of potential angles we need to downselect
-    # angle_ni = np.unique(angle_ni)
-    # angle_ysz = np.unique(angle_ysz)
-    # angle_pore = np.unique(angle_pore)
-    # print(angle_ni)
-    # print(angle_ysz)
-    # print(angle_pore)
+    # Print the mean contact angle
+    mean_contact_angle = np.mean(np.array(contact_angle_list))
 
     # Output the data
     fields = {
@@ -531,9 +459,48 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
         "plane_normal": plane_normal_data_original,
         "matrix_normal": matrix_normal_data_original,
     }
-    output.Output.numpy_to_rectilinear_vtk(
-        fields, domain_size=np.array([x_size, y_size])
-    )
+    if do_output:
+        output.Output.numpy_to_rectilinear_vtk(
+            fields, domain_size=np.array([x_size, y_size])
+        )
+
+    return mean_contact_angle
 
 
-find_positions_from_contact_angle(math.pi / 2, 30)
+find_positions_from_contact_angle(40, 30, h=0.05, do_output=True)
+exit()
+
+h_range = np.logspace(-1.5, 0, 4)
+contact_angle_range = np.linspace(40, 140, 20)
+contact_angle_error = np.zeros((len(h_range), len(contact_angle_range)))
+for i, h in enumerate(h_range):
+    for j, ideal_contact_angle in enumerate(contact_angle_range):
+        c = find_positions_from_contact_angle(ideal_contact_angle, 30, h)
+        contact_angle_error[i, j] = np.abs(c - ideal_contact_angle)
+
+H, CA = np.meshgrid(contact_angle_range, h_range)
+plt.figure(figsize=(7, 5))
+
+print(contact_angle_error)
+
+plt.imshow(
+    contact_angle_error,
+    origin="lower",
+    aspect="auto",
+    interpolation="none",
+    extent=[
+        contact_angle_range.min(),
+        contact_angle_range.max(),
+        h_range.min(),
+        h_range.max(),
+    ],
+)
+
+plt.colorbar(label="Computed contact angle")
+plt.xlabel("Ideal contact angle (deg)")
+plt.ylabel("h")
+plt.yscale("log")
+
+
+plt.tight_layout()
+plt.savefig("test.png", dpi=300)
