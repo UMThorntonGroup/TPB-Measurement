@@ -110,7 +110,7 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
     triple_phase_boundary = sphere_zero & plane_zero & matrix_zero
 
     # Throw out TPB voxels that are too close to the boundary
-    boundary_box_length = 2
+    boundary_box_length = 3
     old_triple_phase_boundary = triple_phase_boundary.copy()
     mask = np.ones_like(triple_phase_boundary, dtype=bool)
     for axis in range(triple_phase_boundary.ndim):
@@ -296,7 +296,7 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
                     "points at the plane-matrix interface."
                 )
 
-            def index_from_coords(data, coords):
+            def vector_data_from_coords(data, coords):
                 coords = np.asarray(coords)
                 index_tuple = tuple(
                     coords[:, j] for j in range(coords.shape[1])
@@ -314,54 +314,152 @@ def find_positions_from_contact_angle(contact_angle: float, radius: float):
                 np.where(local_plane_matrix)
             ]
 
-            local_normal_sphere_sphere_plane_interface = index_from_coords(
-                sphere_normal_data_original, local_sphere_plane_indices
+            local_normal_sphere_sphere_plane_interface = (
+                vector_data_from_coords(
+                    sphere_normal_data_original, local_sphere_plane_indices
+                )
             )
-            local_normal_sphere_sphere_matrix_interface = index_from_coords(
-                sphere_normal_data_original, local_sphere_matrix_indices
-            )
-
-            local_normal_plane_sphere_plane_interface = index_from_coords(
-                plane_normal_data_original, local_sphere_plane_indices
-            )
-            local_normal_plane_plane_matrix_interface = index_from_coords(
-                plane_normal_data_original, local_plane_matrix_indices
+            local_normal_sphere_sphere_matrix_interface = (
+                vector_data_from_coords(
+                    sphere_normal_data_original, local_sphere_matrix_indices
+                )
             )
 
-            local_normal_plane_sphere_matrix_interface = index_from_coords(
-                matrix_normal_data_original, local_sphere_matrix_indices
+            local_normal_plane_sphere_plane_interface = (
+                vector_data_from_coords(
+                    plane_normal_data_original, local_sphere_plane_indices
+                )
             )
-            local_normal_matrix_plane_matrix_interface = index_from_coords(
-                matrix_normal_data_original, local_plane_matrix_indices
+            local_normal_plane_plane_matrix_interface = (
+                vector_data_from_coords(
+                    plane_normal_data_original, local_plane_matrix_indices
+                )
             )
+
+            local_normal_matrix_sphere_matrix_interface = (
+                vector_data_from_coords(
+                    matrix_normal_data_original, local_sphere_matrix_indices
+                )
+            )
+            local_normal_matrix_plane_matrix_interface = (
+                vector_data_from_coords(
+                    matrix_normal_data_original, local_plane_matrix_indices
+                )
+            )
+
+            # Check that the sizes are the same between shared interfaces
+            if (
+                local_normal_sphere_sphere_plane_interface.shape
+                != local_normal_plane_sphere_plane_interface.shape
+            ):
+                raise ValueError("Shape mismatch at sphere-plane interface")
+            if (
+                local_normal_sphere_sphere_matrix_interface.shape
+                != local_normal_matrix_sphere_matrix_interface.shape
+            ):
+                raise ValueError("Shape mismatch at sphere-matrix interface")
+            if (
+                local_normal_plane_plane_matrix_interface.shape
+                != local_normal_matrix_plane_matrix_interface.shape
+            ):
+                raise ValueError("Shape mismatch at plane-matrix interface")
 
             # Grab the dot product of the orthogonal interface vectors pairs
-            # TODO: Don't clip the values and print an error instead
-            local_dot_sphere_plane = np.ravel(
-                np.matmul(
-                    local_normal_sphere_sphere_plane_interface,
-                    np.transpose(local_normal_plane_sphere_plane_interface),
-                )
+            def check_valid_range(
+                data,
+                min: float = -1.0,
+                max: float = 1.0,
+                clip_tolerance: float = None,
+            ):
+                if clip_tolerance is not None:
+                    mask = (data < (min - clip_tolerance)) | (
+                        data > (max + clip_tolerance)
+                    )
+                    data[~mask] = np.clip(data[~mask], min, max)
+                else:
+                    mask = (data < min) | (data > max)
+                if np.any(mask):
+                    raise ValueError(
+                        f"Invalid range for data: {data[np.where(mask)]}"
+                    )
+
+            local_dot_sphere_plane = np.vecdot(
+                local_normal_sphere_sphere_plane_interface,
+                local_normal_plane_sphere_plane_interface,
             )
-            local_dot_sphere_plane = np.clip(local_dot_sphere_plane, -1, 1)
-            local_dot_sphere_matrix = np.ravel(
-                np.matmul(
-                    local_normal_sphere_sphere_matrix_interface,
-                    np.transpose(local_normal_plane_sphere_matrix_interface),
-                )
+            local_dot_sphere_matrix = np.vecdot(
+                local_normal_sphere_sphere_matrix_interface,
+                local_normal_matrix_sphere_matrix_interface,
             )
-            local_dot_sphere_matrix = np.clip(local_dot_sphere_matrix, -1, 1)
-            local_dot_plane_matrix = np.ravel(
-                np.matmul(
-                    local_normal_plane_plane_matrix_interface,
-                    np.transpose(local_normal_matrix_plane_matrix_interface),
-                )
+            local_dot_plane_matrix = np.vecdot(
+                local_normal_plane_plane_matrix_interface,
+                local_normal_matrix_plane_matrix_interface,
             )
-            local_dot_plane_matrix = np.clip(local_dot_plane_matrix, -1, 1)
-            print(local_dot_sphere_plane)
-            print(local_dot_sphere_matrix)
-            print(local_dot_plane_matrix)
-            print(tpb_distance)
+            check_valid_range(local_dot_sphere_plane, clip_tolerance=1e-6)
+            check_valid_range(local_dot_sphere_matrix, clip_tolerance=1e-6)
+            check_valid_range(local_dot_plane_matrix, clip_tolerance=1e-6)
+
+            # Now for the quality measurement. We want to minimize the
+            # distance from the TPB and to have the dot product of the
+            # vectors approach -1. Importantly, the quality measurement
+            # must approach 1 for the ideal case to weight each
+            # contribution enough. Approaching 0, would skew results
+            # because anything multiplied by zero is itself. Additionally
+            # we have to add some number to the max so we don't multiply
+            # by zero for the same reasosns as above.
+            def renormalize_distance(d):
+                return 1 - d / np.max(1.1 * d)
+
+            def renormalize_dot_product(d):
+                return 1 - (d + 1) / np.max(1.1 * (d + 1))
+
+            def compute_quality(dot, distance):
+                return renormalize_dot_product(dot) * renormalize_distance(
+                    distance
+                )
+
+            local_sphere_plane_quality = compute_quality(
+                local_dot_sphere_plane,
+                tpb_distance[np.where(local_sphere_plane)],
+            )
+            local_sphere_matrix_quality = compute_quality(
+                local_dot_sphere_matrix,
+                tpb_distance[np.where(local_sphere_matrix)],
+            )
+            local_plane_matrix_quality = compute_quality(
+                local_dot_plane_matrix,
+                tpb_distance[np.where(local_plane_matrix)],
+            )
+
+            def max_quality_index(quality):
+                return np.argmax(quality)
+
+            def print_info(context, dot, distance, quality):
+                print(
+                    f"{context}:\n"
+                    f"  dot: {dot[max_quality_index(quality)]}\n"
+                    f"  distance: {distance[max_quality_index(quality)]}\n"
+                    f"  quality: {quality[max_quality_index(quality)]}\n"
+                )
+
+            print_info(
+                "sphere-plane",
+                local_dot_sphere_plane,
+                tpb_distance[np.where(local_sphere_plane)],
+                local_sphere_plane_quality,
+            )
+            print_info(
+                "sphere-matrix",
+                local_dot_sphere_matrix,
+                tpb_distance[np.where(local_sphere_matrix)],
+                local_sphere_matrix_quality,
+            )
+            print_info(
+                "plane-matrix",
+                local_dot_plane_matrix,
+                tpb_distance[np.where(local_plane_matrix)],
+                local_plane_matrix_quality,
+            )
 
     grab_nearby_vectors(boundary_box_length)
 

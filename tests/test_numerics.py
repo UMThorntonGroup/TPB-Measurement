@@ -11,7 +11,7 @@ def test_1d_normal():
     data = np.append(forward, backward)
 
     normal = numerics.NormalData(data)
-    normal_data = normal.get_normal()
+    normal_data = normal.get_upwind_normal()
 
     expected_normal_data = np.ones_like(normal_data)
     expected_normal_data[0] = 0
@@ -31,7 +31,7 @@ def test_2d_normal():
     data = np.reshape(data, (n, n))
 
     normal = numerics.NormalData(data)
-    normal_data = normal.get_normal()
+    normal_data = normal.get_upwind_normal()
 
     expected_normal_data = np.ones_like(normal_data)
     expected_normal_data[:, 0] = 0
@@ -52,7 +52,7 @@ def test_3d_normal():
     data = np.reshape(data, (n, n, n))
 
     normal = numerics.NormalData(data)
-    normal_data = normal.get_normal()
+    normal_data = normal.get_upwind_normal()
 
     expected_normal_data = np.ones_like(normal_data)
     expected_normal_data[:, :, 0] = 0
