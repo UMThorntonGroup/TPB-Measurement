@@ -26,35 +26,30 @@ def find_positions_from_contact_angle(
 
     x_size = 100
     y_size = 100
-    z_size = 100
 
     n_points_x = math.ceil(x_size / h)
     n_points_y = math.ceil(y_size / h)
-    n_points_z = math.ceil(z_size / h)
 
     x_positions = np.linspace(0, x_size, n_points_x)
     y_positions = np.linspace(0, y_size, n_points_y)
-    z_positions = np.linspace(0, z_size, n_points_z)
 
     # Create the meshgrid
-    x, y, z = np.meshgrid(x_positions, y_positions, z_positions)
+    x, y = np.meshgrid(x_positions, y_positions)
     original_shape = x.shape
     # Flatten the data
     x = x.flatten()
     y = y.flatten()
-    z = z.flatten()
 
     # Place the plane level-set somewhere in domain. For now,
     # we'll always place it at y = 20
     plane_y_position = 20
     plane_level_set = level_set.PlaneLevelSet(
-        [0, 1, 0], [plane_y_position, plane_y_position, plane_y_position]
+        [0, 1], [plane_y_position, plane_y_position]
     )
-    plane_level_set_data = plane_level_set.get_value(x, y, z)
+    plane_level_set_data = plane_level_set.get_value(x, y)
 
     # Compute the origin of the sphere, given the contact angle
     sphere_x_position = x_size / 2
-    sphere_z_position = z_size / 2
 
     def compute_sphere_y_position(_radius: float):
         return plane_y_position - _radius * math.cos(contact_angle)
@@ -63,9 +58,9 @@ def find_positions_from_contact_angle(
 
     # Place the sphere level-set
     sphere_level_set = level_set.SphereLevelSet(
-        radius, [sphere_x_position, sphere_y_position, sphere_z_position]
+        radius, [sphere_x_position, sphere_y_position]
     )
-    sphere_level_set_data = sphere_level_set.get_value(x, y, z)
+    sphere_level_set_data = sphere_level_set.get_value(x, y)
 
     # Note that this constructs the full sphere, however to simulate
     # the triple-boundary we have to cut-off the sphere where it intersects
@@ -513,7 +508,7 @@ def find_positions_from_contact_angle(
     }
     if do_output:
         output.Output.numpy_to_rectilinear_vtk(
-            fields, domain_size=np.array([x_size, y_size, z_size])
+            fields, domain_size=np.array([x_size, y_size])
         )
 
     return mean_contact_angle, std_contact_angle
@@ -550,4 +545,4 @@ for h in h_range:
 plt.xlabel(r"$\theta_0$")
 plt.ylabel(r"$|\theta_m - \theta_0|$")
 plt.legend()
-plt.savefig("3d_spherical_cap.png", dpi=300)
+plt.savefig("2d_spherical_cap.png", dpi=300)
