@@ -1,5 +1,6 @@
 import math
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from tpb_measurement import angle, level_set, numerics, output
@@ -518,7 +519,35 @@ def find_positions_from_contact_angle(
     return mean_contact_angle, std_contact_angle
 
 
-c, u = find_positions_from_contact_angle(
-    40, 30, h=0.25, do_output=False, boundary_box_length=10
-)
-print(c, u)
+h_range = [0.5, 1, 2]
+contact_angle_range = np.linspace(40, 140, 10)
+
+plt.figure()
+for h in h_range:
+    c_mean_list = []
+    c_std_list = []
+
+    for c in contact_angle_range:
+        c_mean, c_std = find_positions_from_contact_angle(
+            c, 30, h=h, do_output=False, boundary_box_length=5
+        )
+
+        c_mean_list.append(c_mean)
+        c_std_list.append(c_std)
+
+    c_mean_list = np.array(c_mean_list)
+    c_std_list = np.array(c_std_list)
+
+    plt.errorbar(
+        contact_angle_range,
+        np.abs(c_mean_list - contact_angle_range),
+        yerr=c_std_list,
+        fmt="-o",
+        capsize=5,
+        label=f"h = {h}",
+    )
+
+plt.xlabel(r"$\theta_0$")
+plt.ylabel(r"$|\theta_m - \theta_0|$")
+plt.legend()
+plt.savefig("3d_spherical_cap.png", dpi=300)
