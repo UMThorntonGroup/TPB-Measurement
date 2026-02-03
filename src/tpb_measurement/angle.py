@@ -6,7 +6,6 @@ from tpb_measurement import numerics
 class ContactAngle:
     def __init__(self, level_set_1, level_set_2, level_set_3, h, b_length):
         # Level-set fields for each of the three phases
-        # TODO: Add check here to make sure they sum correctly
         self.ls_1 = level_set_1
         self.ls_2 = level_set_2
         self.ls_3 = level_set_3
@@ -36,6 +35,11 @@ class ContactAngle:
 
         # Triple boundary directions
         self.tpb_directions = None
+
+    def _run_tpb_measurement(self):
+        self._get_normals()
+        self._get_masks()
+        self._find_triple_boundary_direction()
 
     def _get_normals(self):
         normal_object_1 = numerics.NormalData(self.ls_1)
@@ -169,13 +173,13 @@ class ContactAngle:
 
             # Compute the relative difference
             rel_difference = np.abs(self.tpb_directions - temp_direction)
-            print(f"Iteration {i} max difference: {np.max(rel_difference)}")
+            # print(f"Iteration {i} max difference: {np.max(rel_difference)}")
 
             # Update the temp
             temp_direction = self.tpb_directions
 
             if np.all(rel_difference < self.tolerance):
-                print(f"Converged at iteration {i}")
+                # print(f"Converged at iteration {i}")
                 break
             elif i == self.iterations - 1:
                 print(f"Failed to converge after {i} iterations")

@@ -3,7 +3,10 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tpb_measurement import angle, level_set, numerics, output
+from tpb_measurement import angle, level_set, timer, utilities
+
+if __debug__:
+    print("Debug mode is ON")
 
 
 def find_positions_from_contact_angle(
@@ -79,7 +82,7 @@ def find_positions_from_contact_angle(
     plane_level_set_data = np.reshape(plane_level_set_data, original_shape)
     matrix_level_set_data = np.reshape(matrix_level_set_data, original_shape)
 
-    # Create the the contact angle object
+    # Create the contact angle object
     contact_angle_object = angle.ContactAngle(
         sphere_level_set_data,
         plane_level_set_data,
@@ -87,9 +90,7 @@ def find_positions_from_contact_angle(
         h,
         boundary_box_length,
     )
-    contact_angle_object._get_normals()
-    contact_angle_object._get_masks()
-    contact_angle_object._find_triple_boundary_direction()
+    contact_angle_object._run_tpb_measurement()
 
     sphere_normal_data = contact_angle_object.n_1
     plane_normal_data = contact_angle_object.n_2
@@ -101,24 +102,6 @@ def find_positions_from_contact_angle(
     plane_matrix_interface = contact_angle_object.interface_23
 
     tpb_direction_candidates = contact_angle_object.tpb_directions
-
-    # Truncate the data to the tpb voxels and save the original data
-    sphere_normal_data_original = sphere_normal_data.copy()
-    plane_normal_data_original = plane_normal_data.copy()
-    matrix_normal_data_original = matrix_normal_data.copy()
-
-    sphere_plane_normal = numerics.NormalData(
-        sphere_level_set_data - plane_level_set_data
-    )
-    sphere_plane_normal_data = sphere_plane_normal.get_normal(h)
-    sphere_matrix_normal = numerics.NormalData(
-        sphere_level_set_data - matrix_level_set_data
-    )
-    sphere_matrix_normal_data = sphere_matrix_normal.get_normal(h)
-    plane_matrix_normal = numerics.NormalData(
-        plane_level_set_data - matrix_level_set_data
-    )
-    plane_matrix_normal_data = plane_matrix_normal.get_normal(h)
 
     # Once we've computed the TPB direction, we can compute the contact angles
     # Do to do, we need to find the normal vectors at each of the interfaces
@@ -172,10 +155,6 @@ def find_positions_from_contact_angle(
         # types
         for point_set_index, point_set in enumerate(expanded_tpb):
             # Convert the point set to index notation
-            # Why is python and numpy like this... indexing ..............
-            # ............................................................
-            # ahhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
-            #
             point_index_set = tuple(np.transpose(point_set))
 
             # Grab the local mask from the neighbors
@@ -220,73 +199,52 @@ def find_positions_from_contact_angle(
 
             local_normal_sphere_sphere_plane_interface = (
                 vector_data_from_coords(
-                    sphere_normal_data_original, local_sphere_plane_indices
+                    sphere_normal_data, local_sphere_plane_indices
                 )
             )
             local_normal_sphere_sphere_matrix_interface = (
                 vector_data_from_coords(
-                    sphere_normal_data_original, local_sphere_matrix_indices
+                    sphere_normal_data, local_sphere_matrix_indices
                 )
             )
 
             local_normal_plane_sphere_plane_interface = (
                 vector_data_from_coords(
-                    plane_normal_data_original, local_sphere_plane_indices
+                    plane_normal_data, local_sphere_plane_indices
                 )
             )
             local_normal_plane_plane_matrix_interface = (
                 vector_data_from_coords(
-                    plane_normal_data_original, local_plane_matrix_indices
+                    plane_normal_data, local_plane_matrix_indices
                 )
             )
 
             local_normal_matrix_sphere_matrix_interface = (
                 vector_data_from_coords(
-                    matrix_normal_data_original, local_sphere_matrix_indices
+                    matrix_normal_data, local_sphere_matrix_indices
                 )
             )
             local_normal_matrix_plane_matrix_interface = (
                 vector_data_from_coords(
-                    matrix_normal_data_original, local_plane_matrix_indices
+                    matrix_normal_data, local_plane_matrix_indices
                 )
             )
 
             # Check that the sizes are the same between shared interfaces
-            if (
-                local_normal_sphere_sphere_plane_interface.shape
-                != local_normal_plane_sphere_plane_interface.shape
-            ):
-                raise ValueError("Shape mismatch at sphere-plane interface")
-            if (
-                local_normal_sphere_sphere_matrix_interface.shape
-                != local_normal_matrix_sphere_matrix_interface.shape
-            ):
-                raise ValueError("Shape mismatch at sphere-matrix interface")
-            if (
-                local_normal_plane_plane_matrix_interface.shape
-                != local_normal_matrix_plane_matrix_interface.shape
-            ):
-                raise ValueError("Shape mismatch at plane-matrix interface")
+            utilities.assert_shape(
+                local_normal_sphere_sphere_plane_interface,
+                local_normal_plane_sphere_plane_interface,
+            )
+            utilities.assert_shape(
+                local_normal_sphere_sphere_matrix_interface,
+                local_normal_matrix_sphere_matrix_interface,
+            )
+            utilities.assert_shape(
+                local_normal_plane_plane_matrix_interface,
+                local_normal_matrix_plane_matrix_interface,
+            )
 
             # Grab the dot product of the orthogonal interface vectors pairs
-            def check_valid_range(
-                data,
-                min: float = -1.0,
-                max: float = 1.0,
-                clip_tolerance: float = None,
-            ):
-                if clip_tolerance is not None:
-                    mask = (data < (min - clip_tolerance)) | (
-                        data > (max + clip_tolerance)
-                    )
-                    data[~mask] = np.clip(data[~mask], min, max)
-                else:
-                    mask = (data < min) | (data > max)
-                if np.any(mask):
-                    raise ValueError(
-                        f"Invalid range for data: {data[np.where(mask)]}"
-                    )
-
             local_dot_sphere_plane = np.vecdot(
                 local_normal_sphere_sphere_plane_interface,
                 local_normal_plane_sphere_plane_interface,
@@ -299,18 +257,20 @@ def find_positions_from_contact_angle(
                 local_normal_plane_plane_matrix_interface,
                 local_normal_matrix_plane_matrix_interface,
             )
-            check_valid_range(local_dot_sphere_plane, clip_tolerance=1e-6)
-            check_valid_range(local_dot_sphere_matrix, clip_tolerance=1e-6)
-            check_valid_range(local_dot_plane_matrix, clip_tolerance=1e-6)
+            utilities.assert_range_with_clipping(local_dot_sphere_plane, -1, 1)
+            utilities.assert_range_with_clipping(
+                local_dot_sphere_matrix, -1, 1
+            )
+            utilities.assert_range_with_clipping(local_dot_plane_matrix, -1, 1)
 
             # Now for the quality measurement. We want to minimize the
             # distance from the TPB and to have the dot product of the
             # vectors approach -1. Importantly, the quality measurement
             # must approach 1 for the ideal case to weight each
             # contribution enough. Approaching 0, would skew results
-            # because anything multiplied by zero is itself. Additionally
+            # because anything multiplied by zero is itself. Additionally,
             # we have to add some number to the max so we don't multiply
-            # by zero for the same reasosns as above.
+            # by zero for the same reasons as above.
             def renormalize_distance(d):
                 return 1 - d / np.max(1.1 * d)
 
@@ -459,10 +419,7 @@ def find_positions_from_contact_angle(
             # phases.
             def compute_contact_angle(vec_1, vec_2):
                 dot = np.vecdot(vec_1, vec_2)
-                if (np.abs(dot) - 1) < 1e-3:
-                    dot = np.clip(dot, -1, 1)
-                else:
-                    raise ValueError("Invalid dot product")
+                utilities.assert_range_with_clipping(dot, -1, 1)
                 angle = 180.0 - 180.0 / np.pi * np.acos(dot)
                 return angle
 
@@ -490,29 +447,20 @@ def find_positions_from_contact_angle(
     mean_contact_angle = np.mean(np.array(contact_angle_list))
     std_contact_angle = np.std(np.array(contact_angle_list))
 
-    # Output the data
-    fields = {
-        "sphere": sphere_level_set_data,
-        "plane": plane_level_set_data,
-        "matrix": matrix_level_set_data,
-        "sphere_plane": sphere_plane_interface,
-        "sphere_matrix": sphere_matrix_interface,
-        "plane_matrix": plane_matrix_interface,
-        "triple_phase_boundary": triple_phase_boundary,
-        "sphere_normal": sphere_normal_data_original,
-        "plane_normal": plane_normal_data_original,
-        "matrix_normal": matrix_normal_data_original,
-        "sphere_plane_normal": sphere_plane_normal_data,
-        "sphere_matrx_normal": sphere_matrix_normal_data,
-        "plane_matrix_normal": plane_matrix_normal_data,
-    }
-    if do_output:
-        output.Output.numpy_to_rectilinear_vtk(
-            fields, domain_size=np.array([x_size, y_size])
-        )
-
     return mean_contact_angle, std_contact_angle
 
+
+timer_object = timer.Timer()
+
+timer_object.begin("Run")
+c_mean, c_std = find_positions_from_contact_angle(
+    90, 30, h=0.01, do_output=False, boundary_box_length=5
+)
+print(c_mean, c_std)
+timer_object.end("Run")
+timer_object.print_summary()
+
+exit()
 
 h_range = [0.5, 1, 2]
 contact_angle_range = np.linspace(40, 140, 10)
