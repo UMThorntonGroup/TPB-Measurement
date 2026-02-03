@@ -1,5 +1,6 @@
-from tpb_measurement import numerics
 import numpy as np
+
+from tpb_measurement import numerics
 
 
 class ContactAngle:
@@ -16,13 +17,13 @@ class ContactAngle:
         # Boundary box spacing
         self.b_length = b_length
 
-        # Max number of iterations and tolerance for the search of the most likely
-        # triple boundary direction
+        # Max number of iterations and tolerance for the search of the most
+        # likely triple boundary direction
         self.iterations = 100
         self.tolerance = 1e-6
 
-        # Normal vectors of the three fields. These are computed with a central
-        # difference and will always have three components.
+        # Normal vectors of the three fields. These are computed with a
+        # central difference and will always have three components.
         self.n_1 = None
         self.n_2 = None
         self.n_3 = None
@@ -61,10 +62,11 @@ class ContactAngle:
             self.n_3 = add_zero_z_component(self.n_3)
 
     def _get_masks(self):
-        # Note that the interfaces are given by the 0 level-set between two or more
-        # phases. As such, we must take into account the grid resolution. For this
-        # reason, I use 0.7h as some tolerance.
-        # TODO: Pick a better tolerance this isn't just the 2D diagonal length
+        # Note that the interfaces are given by the 0 level-set between two
+        # or more phases. As such, we must take into account the grid
+        # resolution. For this reason, I use 0.7h as some tolerance.
+        # TODO: Pick a better tolerance this isn't just the 2D diagonal
+        # length
         grid_tol = 0.7 * self.h
 
         mask_1 = np.isclose(self.ls_1, 0, atol=grid_tol)
@@ -76,8 +78,9 @@ class ContactAngle:
         self.interface_13 = mask_1 & mask_3
         self.interface_23 = mask_2 & mask_3
 
-        # Let us consider each triple phase boundary as a single voxel.
-        # I don't like this in terms of connectivity, but it should be fine
+        # Let us consider each triple phase boundary as a single
+        # voxel. I don't like this in terms of connectivity,
+        # but it should be fine
         self.interface_123 = mask_1 & mask_2 & mask_3
 
         # Throw out TPB voxels that are too close to the boundary
@@ -103,9 +106,10 @@ class ContactAngle:
             raise ValueError("No triple phase boundaries have been found")
 
     def _find_triple_boundary_direction(self):
-        # Now find the direction of the triple phase boundary. This direction
-        # is orthogonal to all the normal vectors above, so we can iterate
-        # on this minimization project with the function below.
+        # Now find the direction of the triple phase boundary. This
+        # direction is orthogonal to all the normal vectors above,
+        # so we can iterate on this minimization project with the
+        # function below.
         def update_a(a, b_1, b_2, b_3):
             def compute_B_ij(i, j):
                 return (
@@ -129,14 +133,21 @@ class ContactAngle:
                     B_11 * a_1**2
                     + B_22 * a_2**2
                     + B_33 * a_3**2
-                    + 2.0 * (B_12 * a_1 * a_2 + B_23 * a_2 * a_3 + B_13 * a_1 * a_3)
+                    + 2.0
+                    * (B_12 * a_1 * a_2 + B_23 * a_2 * a_3 + B_13 * a_1 * a_3)
                 )
 
             lambda_values = compute_lambda()
 
-            delta_a_1 = -2.0 * ((B_11 - lambda_values) * a_1 + B_12 * a_2 + B_13 * a_3)
-            delta_a_2 = -2.0 * ((B_22 - lambda_values) * a_2 + B_12 * a_1 + B_23 * a_3)
-            delta_a_3 = -2.0 * ((B_33 - lambda_values) * a_3 + B_13 * a_1 + B_23 * a_2)
+            delta_a_1 = -2.0 * (
+                (B_11 - lambda_values) * a_1 + B_12 * a_2 + B_13 * a_3
+            )
+            delta_a_2 = -2.0 * (
+                (B_22 - lambda_values) * a_2 + B_12 * a_1 + B_23 * a_3
+            )
+            delta_a_3 = -2.0 * (
+                (B_33 - lambda_values) * a_3 + B_13 * a_1 + B_23 * a_2
+            )
 
             a[..., 0] += delta_a_1
             a[..., 1] += delta_a_2
